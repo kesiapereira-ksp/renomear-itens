@@ -2,55 +2,50 @@ import streamlit as st
 import pandas as pd
 import zipfile
 import io
+import re
 
 # --- Interface Visual do Site ---
-st.title("Renomeador de PDFs por Planilha")
-st.write("Faça o upload da sua planilha de controle e dos PDFs originais. O sistema cruzará os dados e renomeará tudo automaticamente.")
+st.title("Renomeador de PDFs por NF 🔄")
+st.write("O sistema vai ler a coluna de 'Ordem' e cruzar os arquivos buscando o número da Nota Fiscal (NF).")
 
-# 1. Upload da Planilha
+# 1. Uploads
 planilha_enviada = st.file_uploader("1. Envie a Planilha (Excel)", type=["xlsx", "xls"])
-
-# 2. Upload dos PDFs
 arquivos_enviados = st.file_uploader("2. Envie os PDFs", type=["pdf"], accept_multiple_files=True)
 
 if planilha_enviada:
     try:
-        # Lê a planilha usando o pandas
         df = pd.read_excel(planilha_enviada)
-        
-        st.write("✅ **Planilha carregada! Pré-visualização:**")
-        st.dataframe(df.head(3)) # Mostra as 3 primeiras linhas para conferência
         
         st.write("---")
         st.write("⚙️ **Configuração das Colunas**")
         
-        # Cria menus drop-down com os nomes das colunas da planilha do usuário
         colunas = df.columns.tolist()
-        col_origem = st.selectbox("Qual coluna contém o NOME ATUAL do arquivo?", colunas)
-        col_destino = st.selectbox("Qual coluna contém o NOVO NOME do arquivo?", colunas)
+        col_ordem = st.selectbox("Qual coluna contém a ORDEM (001, 002...)?", colunas)
+        col_historico = st.selectbox("Qual coluna contém a NF (ex: Histórico)?", colunas)
         
-        if arquivos_enviados and st.button("Renomear Documentos"):
+        if arquivos_enviados and st.button("Cruzar NFs e Renomear"):
             with st.spinner("Cruzando dados e renomeando..."):
                 
-                # Cria um dicionário (mapa) ligando o nome velho ao nome novo
-                mapa_nomes = {}
+                # 1. Cria um "Dicionário" mapeando a NF para a Ordem correta da planilha
+                mapa_nfs = {}
                 for index, row in df.iterrows():
-                    # Ignora linhas vazias
-                    if pd.isna(row[col_origem]) or pd.isna(row[col_destino]):
+                    if pd.isna(row[col_ordem]) or pd.isna(row[col_historico]):
                         continue
                         
-                    nome_velho = str(row[col_origem]).strip()
-                    nome_novo = str(row[col_destino]).strip()
-                    
-                    # Remove a palavra ".pdf" se o usuário tiver digitado na planilha, para evitar erros
-                    if nome_velho.lower().endswith(".pdf"):
-                        nome_velho = nome_velho[:-4]
-                    if nome_novo.lower().endswith(".pdf"):
-                        nome_novo = nome_novo[:-4]
+                    # Pega a ordem e garante que tenha 3 dígitos (ex: 1 vira "001")
+                    ordem = str(row[col_ordem]).strip()
+                    if ordem.replace('.0', '').isdigit():
+                        ordem = str(int(float(ordem))).zfill(3)
                         
-                    mapa_nomes[nome_velho.lower()] = nome_novo
+                    historico = str(row[col_historico]).strip()
+                    
+                    # Procura o número após "NF." ignorando zeros à esquerda
+                    match_nf_planilha = re.search(r'NF\.0*(\d+)', historico, re.IGNORECASE)
+                    if match_nf_planilha:
+                        numero_nf = match_nf_planilha.group(1)
+                        mapa_nfs[numero_nf] = ordem
                 
-                # Prepara o arquivo ZIP na memória
+                # 2. Prepara o arquivo ZIP
                 zip_buffer = io.BytesIO()
                 arquivos_renomeados = 0
                 arquivos_nao_encontrados = []
@@ -58,37 +53,45 @@ if planilha_enviada:
                 with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
                     for arquivo in arquivos_enviados:
                         nome_original = arquivo.name
-                        nome_base = nome_original.lower()
                         
-                        if nome_base.endswith(".pdf"):
-                            nome_base = nome_base[:-4]
+                        # Procura o número da NF no final do nome do arquivo PDF
+                        # Ex: "001 - texto -000001723.PDF" -> pega o "1723"
+                        match_nf_pdf = re.search(r'-0*(\d+)\.pdf$', nome_original.lower())
+                        
+                        if match_nf_pdf:
+                            nf_pdf = match_nf_pdf.group(1)
                             
-                        # Verifica se o nome do PDF está listado na planilha
-                        if nome_base in mapa_nomes:
-                            novo_nome_final = mapa_nomes[nome_base] + ".pdf"
-                            zip_file.writestr(novo_nome_final, arquivo.getvalue())
-                            arquivos_renomeados += 1
+                            # Se a NF do PDF existir na planilha...
+                            if nf_pdf in mapa_nfs:
+                                ordem_nova = mapa_nfs[nf_pdf]
+                                
+                                # Limpa a ordem antiga do começo do nome, se houver (ex: tira o "001 - " velho)
+                                nome_limpo = re.sub(r'^\d+\s*-\s*', '', nome_original)
+                                
+                                # Junta a Ordem nova com o resto do nome do arquivo
+                                novo_nome_final = f"{ordem_nova} - {nome_limpo}"
+                                
+                                zip_file.writestr(novo_nome_final, arquivo.getvalue())
+                                arquivos_renomeados += 1
+                            else:
+                                zip_file.writestr(nome_original, arquivo.getvalue())
+                                arquivos_nao_encontrados.append(nome_original)
                         else:
-                            # Se não achar na planilha, guarda no ZIP com o nome original
                             zip_file.writestr(nome_original, arquivo.getvalue())
                             arquivos_nao_encontrados.append(nome_original)
                 
-                # Exibe o resultado na tela
-                st.success(f"🎉 Sucesso! {arquivos_renomeados} arquivos renomeados.")
+                # 3. Exibe os resultados
+                st.success(f"🎉 Sucesso! {arquivos_renomeados} arquivos cruzados e renomeados.")
                 
                 if arquivos_nao_encontrados:
-                    st.warning(f"⚠️ {len(arquivos_nao_encontrados)} arquivos não constavam na planilha e mantiveram o nome original.")
+                    st.warning(f"⚠️ {len(arquivos_nao_encontrados)} PDFs não tinham NFs compatíveis com a planilha e mantiveram o nome original.")
                 
-                # Botão de Download do ZIP pronto
                 st.download_button(
-                    label="⬇️ Baixar Arquivos Renomeados (ZIP)",
+                    label="⬇️ Baixar PDFs Renomeados (ZIP)",
                     data=zip_buffer.getvalue(),
-                    file_name="PDFs_Renomeados_Planilha.zip",
+                    file_name="PDFs_NFs_Cruzadas.zip",
                     mime="application/zip"
                 )
                 
     except Exception as e:
         st.error(f"❌ Erro ao ler a planilha. Detalhe: {e}")
-
-elif arquivos_enviados and not planilha_enviada:
-    st.info("⚠️ Envie a planilha primeiro para liberar as opções de renomeação.")
