@@ -97,7 +97,7 @@ if planilha_enviada:
                 st.download_button(
                     label="⬇️ Baixar PDFs Renomeados (ZIP)",
                     data=zip_buffer.getvalue(),
-                    file_name="PDFs_Ordem_Corrigida.zip",
+                    file_name="PDFs_Ordem_Itens.zip",
                     mime="application/zip"
                 )
                 
