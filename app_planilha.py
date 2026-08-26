@@ -4,7 +4,7 @@ import zipfile
 import io
 
 # --- Interface Visual do Site ---
-st.title("Renomeador de PDFs por Planilha 📊📄")
+st.title("Renomeador de PDFs por Planilha")
 st.write("Faça o upload da sua planilha de controle e dos PDFs originais. O sistema cruzará os dados e renomeará tudo automaticamente.")
 
 # 1. Upload da Planilha
