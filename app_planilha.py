@@ -5,7 +5,7 @@ import io
 import re
 
 # --- Interface Visual do Site ---
-st.title("Renomeador de PDFs por NF 🔄")
+st.title("Renomeador de itens por ordem")
 st.write("O sistema vai ler a coluna de 'Ordem' e cruzar os arquivos buscando o número da Nota Fiscal (NF).")
 
 # 1. Uploads
