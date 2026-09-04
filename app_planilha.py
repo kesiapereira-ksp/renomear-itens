@@ -11,7 +11,7 @@ def gerar_chave_empresa(nome_bruto):
     return nome_limpo[:8]
 
 # --- Interface Visual do Site ---
-st.title("Renomeador de Renomeador de Itens por Ordem")
+st.title("Renomeador de Itens por Ordem")
 st.write("O sistema cruzará os arquivos buscando o número da NF e o Nome da Empresa para evitar duplicidades.")
 
 planilha_enviada = st.file_uploader("1. Envie a Planilha (Excel)", type=["xlsx", "xls"])
