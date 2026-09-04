@@ -46,17 +46,25 @@ if planilha_enviada:
                     if ordem.replace('.0', '').isdigit():
                         ordem = str(int(float(ordem))).zfill(3)
                         
+                    # Guarda os valores originais para mostrar no relatório final
+                    nf_original = str(row[col_nf]).strip()
+                    empresa_original = str(row[col_empresa]).strip()
+                        
                     # Trata o número da NF da planilha (tira zeros da esquerda pra evitar erros de cruzamento)
-                    numero_nf = str(row[col_nf]).strip().lstrip('0')
+                    numero_nf = nf_original.lstrip('0')
                     if not numero_nf: 
                         numero_nf = '0'
                         
-                    # Trata o nome da empresa
-                    nome_empresa_planilha = str(row[col_empresa]).strip()
-                        
                     # Cria a chave única. Ex: "594_KEYCONSU"
-                    chave_unica = f"{numero_nf}_{gerar_chave_empresa(nome_empresa_planilha)}"
-                    mapa_arquivos[chave_unica] = ordem
+                    chave_unica = f"{numero_nf}_{gerar_chave_empresa(empresa_original)}"
+                    
+                    # Agora guardamos mais informações no mapa e um status 'encontrado'
+                    mapa_arquivos[chave_unica] = {
+                        'ordem': ordem,
+                        'nf_original': nf_original,
+                        'empresa_original': empresa_original,
+                        'encontrado': False
+                    }
                 
                 # 2. Prepara o arquivo ZIP
                 zip_buffer = io.BytesIO()
@@ -83,7 +91,10 @@ if planilha_enviada:
                             chave_busca = f"{nf_pdf}_{gerar_chave_empresa(nome_empresa_pdf)}"
                             
                             if chave_busca in mapa_arquivos:
-                                ordem_nova = mapa_arquivos[chave_busca]
+                                ordem_nova = mapa_arquivos[chave_busca]['ordem']
+                                
+                                # Marca na planilha que este item encontrou um PDF!
+                                mapa_arquivos[chave_busca]['encontrado'] = True
                                 
                                 # Limpa a ordem velha do começo do arquivo (se houver) e junta a nova
                                 nome_limpo = re.sub(r'^\d+\s*-\s*', '', nome_original)
@@ -98,15 +109,30 @@ if planilha_enviada:
                             zip_file.writestr(nome_original, arquivo.getvalue())
                             arquivos_nao_encontrados.append(nome_original)
                 
-                # 3. Exibe os resultados
+                # 3. Verifica quais itens da planilha ficaram sem PDF
+                itens_planilha_sem_pdf = []
+                for chave, dados in mapa_arquivos.items():
+                    if not dados['encontrado']:
+                        itens_planilha_sem_pdf.append(f"Ordem: {dados['ordem']} | NF: {dados['nf_original']} | Empresa: {dados['empresa_original']}")
+                
+                # 4. Exibe os resultados
                 st.success(f"🎉 Sucesso! {arquivos_renomeados} arquivos cruzados com precisão.")
                 
+                # Relatório 1: PDFs sem correspondência
                 if arquivos_nao_encontrados:
-                    st.warning(f"⚠️ {len(arquivos_nao_encontrados)} PDFs não acharam correspondência exata (NF + Empresa) na planilha.")
-                    with st.expander("Ver arquivos que não foram renomeados"):
+                    st.warning(f"⚠️ {len(arquivos_nao_encontrados)} PDFs não acharam correspondência exata na planilha.")
+                    with st.expander("Ver PDFs não renomeados"):
                         for arq in arquivos_nao_encontrados:
-                            st.write(arq)
+                            st.write(f"- {arq}")
                 
+                # Relatório 2: Itens da planilha sem PDF
+                if itens_planilha_sem_pdf:
+                    st.info(f"📋 {len(itens_planilha_sem_pdf)} itens da planilha não possuem um PDF correspondente.")
+                    with st.expander("Ver itens da planilha pendentes"):
+                        for item in itens_planilha_sem_pdf:
+                            st.write(f"- {item}")
+                
+                # Botão de Download
                 st.download_button(
                     label="⬇️ Baixar PDFs Renomeados (ZIP)",
                     data=zip_buffer.getvalue(),
