@@ -3,16 +3,11 @@ import pandas as pd
 import zipfile
 import io
 import re
-import unicodedata
-
-# Função para remover acentos (ex: RESCISÕES vira RESCISOES)
-def remover_acentos(texto):
-    return ''.join(c for c in unicodedata.normalize('NFKD', str(texto)) if not unicodedata.combining(c))
 
 # Função auxiliar para limpar e pegar o início do nome da empresa
 def gerar_chave_empresa(nome_bruto):
-    nome_sem_acento = remover_acentos(nome_bruto)
-    nome_limpo = re.sub(r'[^A-Z0-9]', '', nome_sem_acento.upper())
+    # Deixa tudo maiúsculo, tira espaços/símbolos e pega as 8 primeiras letras
+    nome_limpo = re.sub(r'[^A-Z0-9]', '', str(nome_bruto).upper())
     return nome_limpo[:8]
 
 # --- Interface Visual do Site ---
@@ -31,6 +26,7 @@ if planilha_enviada:
         
         colunas = df.columns.tolist()
         
+        # Seleção das colunas baseadas na sua planilha
         col_ordem = st.selectbox("Qual coluna contém a ORDEM (001, 002...)?", colunas, index=colunas.index('Ordem') if 'Ordem' in colunas else 0)
         col_nf = st.selectbox("Qual coluna contém o número da NF (ex: No. Titulo)?", colunas, index=colunas.index('No. Titulo') if 'No. Titulo' in colunas else 0)
         col_empresa = st.selectbox("Qual coluna contém a Empresa (ex: Nome Fornece)?", colunas, index=colunas.index('Nome Fornece') if 'Nome Fornece' in colunas else 0)
@@ -38,44 +34,39 @@ if planilha_enviada:
         if arquivos_enviados and st.button("Cruzar Dados e Renomear"):
             with st.spinner("Analisando NFs e Empresas..."):
                 
-                # 1. Cria o Dicionário Principal e um Índice por NF para buscas com tolerância
+                # 1. Cria o Dicionário com a CHAVE COMPOSTA (NF + Empresa)
                 mapa_arquivos = {}
-                mapa_por_nf = {}
-                lista_planilha = []
-                
                 for index, row in df.iterrows():
+                    # Ignora a linha se faltar algum dos dados
                     if pd.isna(row[col_ordem]) or pd.isna(row[col_nf]) or pd.isna(row[col_empresa]):
                         continue
                         
+                    # Trata a Ordem (garante que fique no formato 001, 002, etc)
                     ordem = str(row[col_ordem]).strip()
                     if ordem.replace('.0', '').isdigit():
                         ordem = str(int(float(ordem))).zfill(3)
                         
+                    # Guarda os valores originais para mostrar no relatório final
                     nf_original = str(row[col_nf]).strip()
                     empresa_original = str(row[col_empresa]).strip()
                         
+                    # Trata o número da NF da planilha (tira zeros da esquerda pra evitar erros de cruzamento)
                     numero_nf = nf_original.lstrip('0')
                     if not numero_nf: 
                         numero_nf = '0'
                         
+                    # Cria a chave única. Ex: "594_KEYCONSU"
                     chave_unica = f"{numero_nf}_{gerar_chave_empresa(empresa_original)}"
                     
-                    item_info = {
+                    # Agora guardamos mais informações no mapa e um status 'encontrado'
+                    mapa_arquivos[chave_unica] = {
                         'ordem': ordem,
                         'nf_original': nf_original,
-                        'numero_nf_limpo': numero_nf,
                         'empresa_original': empresa_original,
                         'encontrado': False
                     }
-                    
-                    mapa_arquivos[chave_unica] = item_info
-                    lista_planilha.append(item_info)
-                    
-                    if numero_nf not in mapa_por_nf:
-                        mapa_por_nf[numero_nf] = []
-                    mapa_por_nf[numero_nf].append(item_info)
                 
-                # 2. Prepara o arquivo ZIP e processa os PDFs
+                # 2. Prepara o arquivo ZIP
                 zip_buffer = io.BytesIO()
                 arquivos_renomeados = 0
                 arquivos_nao_encontrados = []
@@ -84,36 +75,28 @@ if planilha_enviada:
                     for arquivo in arquivos_enviados:
                         nome_original = arquivo.name
                         
+                        # --- LEITURA DO ARQUIVO PDF ---
+                        # Formato esperado: "NOME DA EMPRESA-NUMERONF.PDF"
                         match_pdf = re.search(r'^(.+?)-(\d+)\.pdf$', nome_original, re.IGNORECASE)
                         
                         if match_pdf:
                             nome_empresa_pdf = match_pdf.group(1).strip()
+                            
+                            # Pega o número da nota do PDF e também tira os zeros à esquerda
                             nf_pdf = match_pdf.group(2).lstrip('0')
                             if not nf_pdf:
                                 nf_pdf = '0'
                             
+                            # Gera a mesma chave única para comparar com a planilha
                             chave_busca = f"{nf_pdf}_{gerar_chave_empresa(nome_empresa_pdf)}"
                             
-                            item_encontrado = None
-                            
-                            # Teste 1: Chave exata (NF + 8 letras sem acento)
-                            if chave_busca in mapa_arquivos and not mapa_arquivos[chave_busca]['encontrado']:
-                                item_encontrado = mapa_arquivos[chave_busca]
-                            else:
-                                # Teste 2: Tolerância (Busca por NF e compara palavras em comum)
-                                if nf_pdf in mapa_por_nf:
-                                    palavras_pdf = set(re.findall(r'\w{3,}', remover_acentos(nome_empresa_pdf).upper()))
-                                    for candidato in mapa_por_nf[nf_pdf]:
-                                        if not candidato['encontrado']:
-                                            palavras_planilha = set(re.findall(r'\w{3,}', remover_acentos(candidato['empresa_original']).upper()))
-                                            if palavras_pdf & palavras_planilha:  # Se houver palavras idênticas
-                                                item_encontrado = candidato
-                                                break
-                            
-                            if item_encontrado:
-                                item_encontrado['encontrado'] = True
-                                ordem_nova = item_encontrado['ordem']
+                            if chave_busca in mapa_arquivos:
+                                ordem_nova = mapa_arquivos[chave_busca]['ordem']
                                 
+                                # Marca na planilha que este item encontrou um PDF!
+                                mapa_arquivos[chave_busca]['encontrado'] = True
+                                
+                                # Limpa a ordem velha do começo do arquivo (se houver) e junta a nova
                                 nome_limpo = re.sub(r'^\d+\s*-\s*', '', nome_original)
                                 novo_nome_final = f"{ordem_nova} - {nome_limpo}"
                                 
@@ -126,27 +109,30 @@ if planilha_enviada:
                             zip_file.writestr(nome_original, arquivo.getvalue())
                             arquivos_nao_encontrados.append(nome_original)
                 
-                # 3. Verifica pendências da planilha
-                itens_planilha_sem_pdf = [
-                    f"Ordem: {item['ordem']} | NF: {item['nf_original']} | Empresa: {item['empresa_original']}"
-                    for item in lista_planilha if not item['encontrado']
-                ]
+                # 3. Verifica quais itens da planilha ficaram sem PDF
+                itens_planilha_sem_pdf = []
+                for chave, dados in mapa_arquivos.items():
+                    if not dados['encontrado']:
+                        itens_planilha_sem_pdf.append(f"Ordem: {dados['ordem']} | NF: {dados['nf_original']} | Empresa: {dados['empresa_original']}")
                 
                 # 4. Exibe os resultados
                 st.success(f"🎉 Sucesso! {arquivos_renomeados} arquivos cruzados com precisão.")
                 
+                # Relatório 1: PDFs sem correspondência
                 if arquivos_nao_encontrados:
                     st.warning(f"⚠️ {len(arquivos_nao_encontrados)} PDFs não acharam correspondência exata na planilha.")
                     with st.expander("Ver PDFs não renomeados"):
                         for arq in arquivos_nao_encontrados:
                             st.write(f"- {arq}")
                 
+                # Relatório 2: Itens da planilha sem PDF
                 if itens_planilha_sem_pdf:
                     st.info(f"📋 {len(itens_planilha_sem_pdf)} itens da planilha não possuem um PDF correspondente.")
                     with st.expander("Ver itens da planilha pendentes"):
                         for item in itens_planilha_sem_pdf:
                             st.write(f"- {item}")
                 
+                # Botão de Download
                 st.download_button(
                     label="⬇️ Baixar PDFs Renomeados (ZIP)",
                     data=zip_buffer.getvalue(),
