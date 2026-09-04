@@ -25,8 +25,11 @@ if planilha_enviada:
         st.write("⚙️ **Configuração das Colunas**")
         
         colunas = df.columns.tolist()
-        col_ordem = st.selectbox("Qual coluna contém a ORDEM (001, 002...)?", colunas)
-        col_historico = st.selectbox("Qual coluna contém a NF e a Empresa (ex: Histórico)?", colunas)
+        
+        # Seleção das colunas baseadas na sua planilha
+        col_ordem = st.selectbox("Qual coluna contém a ORDEM (001, 002...)?", colunas, index=colunas.index('Ordem') if 'Ordem' in colunas else 0)
+        col_nf = st.selectbox("Qual coluna contém o número da NF (ex: No. Titulo)?", colunas, index=colunas.index('No. Titulo') if 'No. Titulo' in colunas else 0)
+        col_empresa = st.selectbox("Qual coluna contém a Empresa (ex: Nome Fornece)?", colunas, index=colunas.index('Nome Fornece') if 'Nome Fornece' in colunas else 0)
         
         if arquivos_enviados and st.button("Cruzar Dados e Renomear"):
             with st.spinner("Analisando NFs e Empresas..."):
@@ -34,24 +37,26 @@ if planilha_enviada:
                 # 1. Cria o Dicionário com a CHAVE COMPOSTA (NF + Empresa)
                 mapa_arquivos = {}
                 for index, row in df.iterrows():
-                    if pd.isna(row[col_ordem]) or pd.isna(row[col_historico]):
+                    # Ignora a linha se faltar algum dos dados
+                    if pd.isna(row[col_ordem]) or pd.isna(row[col_nf]) or pd.isna(row[col_empresa]):
                         continue
                         
+                    # Trata a Ordem (garante que fique no formato 001, 002, etc)
                     ordem = str(row[col_ordem]).strip()
                     if ordem.replace('.0', '').isdigit():
                         ordem = str(int(float(ordem))).zfill(3)
                         
-                    historico = str(row[col_historico]).strip()
-                    
-                    # Procura "NF.123" e pega o texto que vem depois do hífen
-                    match_planilha = re.search(r'NF\.0*(\d+)\s*-\s*(.+)', historico, re.IGNORECASE)
-                    if match_planilha:
-                        numero_nf = match_planilha.group(1)
-                        nome_empresa_planilha = match_planilha.group(2)
+                    # Trata o número da NF da planilha (tira zeros da esquerda pra evitar erros de cruzamento)
+                    numero_nf = str(row[col_nf]).strip().lstrip('0')
+                    if not numero_nf: 
+                        numero_nf = '0'
                         
-                        # Cria uma chave única. Ex: "1723_ARODRIGU"
-                        chave_unica = f"{numero_nf}_{gerar_chave_empresa(nome_empresa_planilha)}"
-                        mapa_arquivos[chave_unica] = ordem
+                    # Trata o nome da empresa
+                    nome_empresa_planilha = str(row[col_empresa]).strip()
+                        
+                    # Cria a chave única. Ex: "594_KEYCONSU"
+                    chave_unica = f"{numero_nf}_{gerar_chave_empresa(nome_empresa_planilha)}"
+                    mapa_arquivos[chave_unica] = ordem
                 
                 # 2. Prepara o arquivo ZIP
                 zip_buffer = io.BytesIO()
@@ -62,20 +67,25 @@ if planilha_enviada:
                     for arquivo in arquivos_enviados:
                         nome_original = arquivo.name
                         
-                        # Captura o Nome da Empresa e o número da NF no final do arquivo PDF
-                        match_pdf = re.search(r'(?:^\d+\s*-\s*)?(.+?)\s*-0*(\d+)\.pdf$', nome_original, re.IGNORECASE)
+                        # --- LEITURA DO ARQUIVO PDF ---
+                        # Formato esperado: "NOME DA EMPRESA-NUMERONF.PDF"
+                        match_pdf = re.search(r'^(.+?)-(\d+)\.pdf$', nome_original, re.IGNORECASE)
                         
                         if match_pdf:
-                            nome_empresa_pdf = match_pdf.group(1)
-                            nf_pdf = match_pdf.group(2)
+                            nome_empresa_pdf = match_pdf.group(1).strip()
                             
-                            # Gera a mesma chave única para comparar
+                            # Pega o número da nota do PDF e também tira os zeros à esquerda
+                            nf_pdf = match_pdf.group(2).lstrip('0')
+                            if not nf_pdf:
+                                nf_pdf = '0'
+                            
+                            # Gera a mesma chave única para comparar com a planilha
                             chave_busca = f"{nf_pdf}_{gerar_chave_empresa(nome_empresa_pdf)}"
                             
                             if chave_busca in mapa_arquivos:
                                 ordem_nova = mapa_arquivos[chave_busca]
                                 
-                                # Limpa a ordem velha do começo e junta a nova
+                                # Limpa a ordem velha do começo do arquivo (se houver) e junta a nova
                                 nome_limpo = re.sub(r'^\d+\s*-\s*', '', nome_original)
                                 novo_nome_final = f"{ordem_nova} - {nome_limpo}"
                                 
@@ -93,6 +103,9 @@ if planilha_enviada:
                 
                 if arquivos_nao_encontrados:
                     st.warning(f"⚠️ {len(arquivos_nao_encontrados)} PDFs não acharam correspondência exata (NF + Empresa) na planilha.")
+                    with st.expander("Ver arquivos que não foram renomeados"):
+                        for arq in arquivos_nao_encontrados:
+                            st.write(arq)
                 
                 st.download_button(
                     label="⬇️ Baixar PDFs Renomeados (ZIP)",
